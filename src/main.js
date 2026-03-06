@@ -146,6 +146,18 @@ function renderApp() {
       <div class="log-container" id="logContainer"></div>
     </div>
 
+    <!-- Incoming Files (live from bot) -->
+    <div class="card" id="incomingCard">
+      <div class="flex-between mb-8">
+        <h2><span class="icon">📨</span> Incoming Files</h2>
+        <span class="text-dim" id="listeningStatus">Not listening</span>
+      </div>
+      <p class="hint mb-8">Send files to your bot — they appear here automatically for download.</p>
+      <div id="incomingList">
+        <p class="text-dim">No incoming files yet. Send a file to the bot to see it here.</p>
+      </div>
+    </div>
+
     <!-- Download History -->
     <div class="card" id="historyCard">
       <h2><span class="icon">📜</span> Download History</h2>
@@ -212,6 +224,7 @@ async function autoReconnect(saved) {
     setConnectionStatus('connected');
     btn.innerHTML = '🔌 Disconnect';
     btn.className = 'btn-danger';
+    startFileListener();
     const link = document.getElementById('messageLink').value.trim();
     if (parseTelegramLink(link)) {
       document.getElementById('btnFetchInfo').disabled = false;
@@ -259,6 +272,7 @@ async function handleConnect() {
     setConnectionStatus('connected');
     btn.innerHTML = '🔌 Disconnect';
     btn.className = 'btn-danger';
+    startFileListener();
     const link = document.getElementById('messageLink').value.trim();
     if (parseTelegramLink(link)) {
       document.getElementById('btnFetchInfo').disabled = false;
@@ -347,6 +361,97 @@ async function handleDownload() {
     resetProgress();
   } finally {
     btn.disabled = false;
+    isDownloading = false;
+  }
+}
+
+// ===== Incoming File Listener =====
+let listenerStarted = false;
+
+function startFileListener() {
+  if (listenerStarted || !downloader || !isConnected) return;
+  listenerStarted = true;
+
+  const statusEl = document.getElementById('listeningStatus');
+  if (statusEl) statusEl.textContent = '🟢 Listening';
+
+  downloader.startListening((fileRef) => {
+    addIncomingFile(fileRef);
+  });
+}
+
+let incomingCounter = 0;
+
+function addIncomingFile(fileRef) {
+  const list = document.getElementById('incomingList');
+  if (!list) return;
+
+  // Clear placeholder
+  if (list.querySelector('.text-dim')) list.innerHTML = '';
+
+  const id = `incoming_${incomingCounter++}`;
+  const icon = getFileIcon(fileRef.mimeType, fileRef.fileName);
+  const time = fileRef.date ? fileRef.date.toLocaleTimeString() : new Date().toLocaleTimeString();
+
+  const item = document.createElement('div');
+  item.className = 'history-item';
+  item.id = id;
+  item.innerHTML = `
+    <span class="file-icon">${icon}</span>
+    <div class="file-details" style="flex: 1; min-width: 0;">
+      <div class="file-name">${fileRef.fileName}</div>
+      <div class="file-meta">${formatFileSize(fileRef.fileSize)} • ${fileRef.mimeType || 'Unknown'} • ${fileRef.chatName || ''} • ${time}</div>
+    </div>
+    <button class="btn-success btn-sm" data-incoming-id="${id}" style="flex-shrink: 0;">
+      📥 Download
+    </button>
+  `;
+
+  // Store fileRef on the element for retrieval
+  item._fileRef = fileRef;
+
+  // Bind download button
+  item.querySelector('button').addEventListener('click', () => handleIncomingDownload(item, fileRef));
+
+  list.prepend(item);
+}
+
+async function handleIncomingDownload(itemEl, fileRef) {
+  if (!isConnected || !downloader || isDownloading) {
+    addLog('warn', 'Cannot download: busy or disconnected.');
+    return;
+  }
+
+  const btn = itemEl.querySelector('button');
+  const connections = parseInt(document.getElementById('connections')?.value) || 4;
+
+  btn.disabled = true;
+  btn.innerHTML = '⏳ ...';
+  isDownloading = true;
+
+  // Show progress
+  const progressBox = document.getElementById('progressBox');
+  progressBox.classList.remove('hidden');
+  resetProgress();
+
+  try {
+    const { blob, fileInfo } = await downloader.downloadFile(fileRef, connections);
+    downloader.saveBlobAs(blob, fileInfo.fileName);
+    addToHistory(fileInfo);
+
+    btn.innerHTML = '✅ Done';
+    btn.className = 'btn-outline btn-sm';
+    setTimeout(() => {
+      progressBox.classList.add('hidden');
+      resetProgress();
+    }, 2000);
+  } catch (error) {
+    addLog('error', `Download failed: ${error.message}`);
+    btn.innerHTML = '📥 Retry';
+    btn.disabled = false;
+    progressBox.classList.add('hidden');
+    resetProgress();
+  } finally {
     isDownloading = false;
   }
 }

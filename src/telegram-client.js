@@ -8,6 +8,7 @@
 
 import { TelegramClient, Api } from 'telegram';
 import { utils } from 'telegram';
+import { NewMessage } from 'telegram/events';
 import bigInt from 'big-integer';
 
 const CREDENTIALS_KEY = 'tg_credentials';
@@ -369,6 +370,120 @@ export class TGDownloader {
 
     this.onLog('dim', `Worker ${workerIdx + 1}: done (${this._formatSize(totalLen)})`);
     return merged;
+  }
+
+  // ===== INCOMING MESSAGE LISTENER =====
+
+  /**
+   * Start listening for incoming messages with media.
+   * Calls onFileReceived(fileRef) whenever a file/media message arrives.
+   */
+  startListening(onFileReceived) {
+    if (!this.client || !this.connected) {
+      this.onLog('error', 'Not connected. Cannot listen for messages.');
+      return;
+    }
+
+    this._onFileReceived = onFileReceived;
+
+    // GramJS event handler for new messages
+    this.client.addEventHandler(async (event) => {
+      try {
+        const message = event.message;
+        if (!message || !message.media) return;
+
+        // Only process documents, photos, videos
+        const media = message.media;
+        if (!media.document && !media.photo) return;
+
+        // Extract file info
+        let fileName = 'unknown';
+        let fileSize = 0;
+        let mimeType = '';
+        let fileLocation = null;
+        let dcId = null;
+
+        if (media.document) {
+          const doc = media.document;
+          fileSize = Number(doc.size);
+          mimeType = doc.mimeType || '';
+          dcId = doc.dcId;
+
+          for (const attr of doc.attributes || []) {
+            if (attr.className === 'DocumentAttributeFilename') {
+              fileName = attr.fileName;
+            }
+          }
+          if (fileName === 'unknown' && mimeType) {
+            fileName = `file_${message.id}.${mimeType.split('/')[1] || 'bin'}`;
+          }
+
+          fileLocation = new Api.InputDocumentFileLocation({
+            id: doc.id,
+            accessHash: doc.accessHash,
+            fileReference: doc.fileReference,
+            thumbSize: '',
+          });
+        } else if (media.photo) {
+          const photo = media.photo;
+          const sizes = photo.sizes || [];
+          const largest = sizes[sizes.length - 1];
+          fileSize = largest && largest.size ? Number(largest.size) : 0;
+          mimeType = 'image/jpeg';
+          fileName = `photo_${message.id}.jpg`;
+          dcId = photo.dcId;
+
+          fileLocation = new Api.InputPhotoFileLocation({
+            id: photo.id,
+            accessHash: photo.accessHash,
+            fileReference: photo.fileReference,
+            thumbSize: largest ? largest.type : '',
+          });
+        }
+
+        if (!fileLocation) return;
+
+        // Get chat info
+        let chatName = 'Unknown';
+        try {
+          const peer = message.peerId;
+          if (peer?.channelId) {
+            chatName = `Channel -100${peer.channelId}`;
+          } else if (peer?.chatId) {
+            chatName = `Chat -${peer.chatId}`;
+          } else if (peer?.userId) {
+            chatName = `User ${peer.userId}`;
+          }
+        } catch {}
+
+        const fileRef = {
+          fileName,
+          fileSize,
+          mimeType,
+          fileLocation,
+          dcId,
+          message,
+          hasMedia: true,
+          chatName,
+          messageId: message.id,
+          date: message.date ? new Date(message.date * 1000) : new Date(),
+        };
+
+        // Cache it
+        const cacheKey = `msg_${message.id}_${dcId}`;
+        this._fileCache.set(cacheKey, fileRef);
+
+        this.onLog('info', `📨 New file: ${fileName} (${this._formatSize(fileSize)}) from ${chatName}`);
+
+        if (this._onFileReceived) {
+          this._onFileReceived(fileRef);
+        }
+      } catch (e) {
+        // Silently ignore non-media messages
+      }
+    }, new NewMessage({}));
+
+    this.onLog('success', '👂 Listening for incoming files...');
   }
 
   // ===== HELPERS =====
