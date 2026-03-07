@@ -2,17 +2,15 @@
  * Cloudflare Pages Function — Telegram API Proxy
  * 
  * Routes:  /api/<telegram-dc-host>/<path>
- * Example: /api/venus-1.telegram.org/apiw1
+ * Example: /api/pluto.web.telegram.org/apiws
  * 
- * This allows the browser client to connect to Telegram servers
- * through Cloudflare's network when direct connections are blocked.
- * WebSocket upgrade is supported for MTProto over WS.
+ * Supports both HTTP and WebSocket proxying.
+ * WebSocket: Creates a pair, connects to Telegram, pipes data bidirectionally.
  */
 
 export async function onRequest(context) {
   const { request, params } = context;
   
-  // params.path is an array of path segments after /api/
   const pathSegments = params.path;
   if (!pathSegments || pathSegments.length < 1) {
     return new Response('Missing target host', { status: 400 });
@@ -22,41 +20,35 @@ export async function onRequest(context) {
   const targetHost = pathSegments[0];
   
   // Validate it's a Telegram domain
-  const allowedDomains = [
-    /^venus(-\d+)?\.telegram\.org$/,
-    /^flora(-\d+)?\.telegram\.org$/,
-    /^vesta(-\d+)?\.telegram\.org$/,
-    /^pluto(-\d+)?\.telegram\.org$/,
-    /^aurora(-\d+)?\.telegram\.org$/,
-    /^(\d+\.)?web\.telegram\.org$/,
-    /^(\w+\.)?telegram\.org$/,
-    /^t\.me$/,
-  ];
-
-  const isAllowed = allowedDomains.some(re => re.test(targetHost));
-  if (!isAllowed) {
+  const allowedPattern = /^[a-z0-9\-]+\.(?:web\.)?telegram\.org$/i;
+  if (!allowedPattern.test(targetHost)) {
     return new Response('Forbidden: not a Telegram domain', { status: 403 });
   }
 
-  // Remaining path segments
+  // Remaining path
   const remainingPath = pathSegments.slice(1).join('/');
-  const targetUrl = `https://${targetHost}/${remainingPath}`;
+
+  // Handle CORS preflight
+  if (request.method === 'OPTIONS') {
+    return new Response(null, {
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+      },
+    });
+  }
 
   // Handle WebSocket upgrade
-  if (request.headers.get('Upgrade') === 'websocket') {
-    // Cloudflare Pages Functions support WebSocket proxying
-    const upgradeRequest = new Request(targetUrl, {
-      method: request.method,
-      headers: request.headers,
-      body: request.body,
-    });
-    return fetch(upgradeRequest);
+  const upgradeHeader = request.headers.get('Upgrade');
+  if (upgradeHeader && upgradeHeader.toLowerCase() === 'websocket') {
+    return handleWebSocket(targetHost, remainingPath);
   }
 
   // Regular HTTP proxy
+  const targetUrl = `https://${targetHost}/${remainingPath}`;
   const proxyHeaders = new Headers(request.headers);
   proxyHeaders.set('Host', targetHost);
-  // Remove CF-specific headers that might confuse upstream
   proxyHeaders.delete('cf-connecting-ip');
   proxyHeaders.delete('cf-ipcountry');
   proxyHeaders.delete('cf-ray');
@@ -69,11 +61,8 @@ export async function onRequest(context) {
       body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined,
     });
 
-    // Return response with CORS headers
     const responseHeaders = new Headers(response.headers);
     responseHeaders.set('Access-Control-Allow-Origin', '*');
-    responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    responseHeaders.set('Access-Control-Allow-Headers', '*');
 
     return new Response(response.body, {
       status: response.status,
@@ -83,4 +72,81 @@ export async function onRequest(context) {
   } catch (err) {
     return new Response(`Proxy error: ${err.message}`, { status: 502 });
   }
+}
+
+/**
+ * Handle WebSocket proxy using Cloudflare's WebSocket API.
+ * Creates a client-facing WebSocket pair and connects upstream to Telegram.
+ */
+async function handleWebSocket(targetHost, path) {
+  // Create the WebSocket pair for the client
+  const [client, server] = Object.values(new WebSocketPair());
+
+  // Connect to the actual Telegram server
+  const targetUrl = `wss://${targetHost}:443/${path}`;
+  
+  try {
+    const upstreamResponse = await fetch(targetUrl, {
+      headers: {
+        'Upgrade': 'websocket',
+      },
+    });
+
+    const upstream = upstreamResponse.webSocket;
+    if (!upstream) {
+      server.accept();
+      server.close(1011, 'Failed to establish upstream WebSocket');
+      return new Response('WebSocket upgrade failed', { status: 502 });
+    }
+
+    upstream.accept();
+    server.accept();
+
+    // Pipe upstream → client
+    upstream.addEventListener('message', (event) => {
+      try {
+        server.send(event.data);
+      } catch {}
+    });
+
+    upstream.addEventListener('close', (event) => {
+      try {
+        server.close(event.code || 1000, event.reason || 'upstream closed');
+      } catch {}
+    });
+
+    upstream.addEventListener('error', () => {
+      try {
+        server.close(1011, 'upstream error');
+      } catch {}
+    });
+
+    // Pipe client → upstream
+    server.addEventListener('message', (event) => {
+      try {
+        upstream.send(event.data);
+      } catch {}
+    });
+
+    server.addEventListener('close', (event) => {
+      try {
+        upstream.close(event.code || 1000, event.reason || 'client closed');
+      } catch {}
+    });
+
+    server.addEventListener('error', () => {
+      try {
+        upstream.close(1011, 'client error');
+      } catch {}
+    });
+
+  } catch (err) {
+    server.accept();
+    server.close(1011, `Upstream connection failed: ${err.message}`);
+  }
+
+  return new Response(null, {
+    status: 101,
+    webSocket: client,
+  });
 }
