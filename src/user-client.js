@@ -223,6 +223,43 @@ export class TGUserClient {
     });
   }
 
+  // ===== READ RECEIPTS =====
+
+  /**
+   * Mark messages as read (sends read receipt / double tick).
+   * Only sends if stealth mode is disabled in settings.
+   */
+  async markAsRead(entity, maxId) {
+    if (!this.client || !this.connected) return;
+    
+    // Check stealth mode setting
+    try {
+      const raw = localStorage.getItem('tgcf_settings');
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s.stealthMode) {
+          this.onLog('dim', '👻 Stealth: skipped read receipt');
+          return;
+        }
+      }
+    } catch {}
+
+    try {
+      await this.client.invoke(new Api.messages.ReadHistory({
+        peer: entity,
+        maxId: maxId || 0,
+      }));
+    } catch (err) {
+      // Try channel version
+      try {
+        await this.client.invoke(new Api.channels.ReadHistory({
+          channel: entity,
+          maxId: maxId || 0,
+        }));
+      } catch {}
+    }
+  }
+
   // ===== MEDIA DOWNLOAD =====
 
   /**

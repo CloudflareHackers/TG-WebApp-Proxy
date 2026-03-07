@@ -23,6 +23,7 @@ const DEFAULTS = {
   chunkSize: 524288,       // 512KB — MTProto standard max
   proxyEnabled: false,
   proxyDomain: '',         // User's own CF Worker proxy domain (e.g. tg-ws-api.example.workers.dev)
+  stealthMode: false,      // Avoid sending read receipts (double tick) when reading messages
   autoChunkSize: false,
   bestChunkSize: null,     // Auto-detected best chunk size (set by auto-tuning)
 };

@@ -10,6 +10,7 @@ let userClient = null;
 let currentEntity = null;
 let currentDialogId = null;
 let dialogsCache = [];
+let userReplyToMsgId = null; // Reply-to state for user mode
 
 export function renderUserMode(container, addLog, switchMode) {
   container.innerHTML = `
@@ -345,6 +346,7 @@ function filterDialogs(query) {
 async function openChat(dialog) {
   currentEntity = dialog.entity;
   currentDialogId = dialog.id;
+  userReplyToMsgId = null;
 
   document.getElementById('userChatsCard')?.classList.add('hidden');
   document.getElementById('userMessagesCard')?.classList.remove('hidden');
@@ -357,10 +359,17 @@ async function openChat(dialog) {
     const list = document.getElementById('messageList');
     list.innerHTML = '';
     // Messages come newest-first, reverse for display
+    let maxId = 0;
     for (const msg of messages.reverse()) {
       appendUserMessage(msg);
+      if (msg.id > maxId) maxId = msg.id;
     }
     list.scrollTop = list.scrollHeight;
+
+    // Mark messages as read (respects stealth mode)
+    if (maxId > 0) {
+      userClient.markAsRead(currentEntity, maxId).catch(() => {});
+    }
   } catch (e) {
     userLog('error', `Failed to load messages: ${e.message}`);
     document.getElementById('messageList').innerHTML = '<p class="text-dim">Failed to load messages.</p>';
@@ -386,12 +395,15 @@ function appendUserMessage(msg) {
       <div class="reply-sent-time">${time}</div>
     `;
   } else {
-    div.className = 'reply-received';
+    div.className = 'reply-received clickable-msg';
     div.innerHTML = `
       ${msg.media ? renderMediaBadge(msg) : ''}
       ${msg.text ? `<div class="reply-received-text">${escHtml(msg.text)}</div>` : ''}
-      <div class="reply-received-time">${time}</div>
+      <div class="reply-received-time">${time} • tap to reply ↩</div>
     `;
+    div.addEventListener('click', () => {
+      setUserReplyTo(msg.id, msg.text || '[Media]');
+    });
   }
 
   list.appendChild(div);
@@ -436,6 +448,24 @@ window._downloadUserMedia = async (msgId) => {
   }
 };
 
+// ===== Reply To =====
+
+function setUserReplyTo(msgId, preview) {
+  userReplyToMsgId = msgId;
+  const input = document.getElementById('userMsgInput');
+  if (input) {
+    input.placeholder = `↩ Reply to: ${(preview || '').substring(0, 50)}...`;
+    input.focus();
+  }
+}
+
+// Global helper to clear reply
+window._clearUserReply = () => { 
+  userReplyToMsgId = null;
+  const input = document.getElementById('userMsgInput');
+  if (input) input.placeholder = 'Type a message...';
+};
+
 // ===== Send Message =====
 
 async function handleUserSendMessage() {
@@ -445,7 +475,7 @@ async function handleUserSendMessage() {
   if (!text) return;
 
   try {
-    await userClient.sendMessage(currentEntity, text);
+    await userClient.sendMessage(currentEntity, text, userReplyToMsgId || undefined);
     appendUserMessage({
       id: Date.now(),
       text,
@@ -454,6 +484,8 @@ async function handleUserSendMessage() {
       media: null,
     });
     input.value = '';
+    input.placeholder = 'Type a message...';
+    userReplyToMsgId = null;
     input.focus();
   } catch (e) {
     userLog('error', `Send failed: ${e.message}`);

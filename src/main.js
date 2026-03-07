@@ -276,6 +276,13 @@ function renderApp(hasSavedCreds) {
         <input type="text" id="settingsProxyDomain" placeholder="tg-ws-api.your-account.workers.dev" style="background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 0.88rem;" />
         <p class="hint">Your deployed TG-WS-API worker domain. Leave empty to use same-origin /api/ fallback.</p>
       </div>
+      <div class="form-group" style="margin-top: 8px;">
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+          <input type="checkbox" id="settingsStealth" style="width: auto; accent-color: var(--warning);" />
+          <span>👻 Stealth Mode (avoid double tick)</span>
+        </label>
+        <p class="hint">Don't send read receipts when reading messages in User Mode. Others won't see double ticks.</p>
+      </div>
       <div class="mt-12">
         <button class="btn-primary btn-sm" id="btnSaveSettings" style="width: auto;">💾 Save Settings</button>
         <span class="text-dim" id="settingsSaveStatus" style="margin-left: 8px;"></span>
@@ -1282,6 +1289,8 @@ function loadSettingsUI() {
   if (chunkEl) chunkEl.value = (s.chunkSize || 524288).toString();
   if (proxyEl) proxyEl.checked = !!s.proxyEnabled;
   if (proxyDomainEl) proxyDomainEl.value = s.proxyDomain || '';
+  const stealthEl = document.getElementById('settingsStealth');
+  if (stealthEl) stealthEl.checked = !!s.stealthMode;
 }
 
 function handleSaveSettings() {
@@ -1297,6 +1306,7 @@ function handleSaveSettings() {
   s.chunkSize = chunkSize;
   s.proxyEnabled = proxyEnabled;
   s.proxyDomain = proxyDomain;
+  s.stealthMode = !!document.getElementById('settingsStealth')?.checked;
 
   // Update the input with cleaned value
   const domainEl = document.getElementById('settingsProxyDomain');
