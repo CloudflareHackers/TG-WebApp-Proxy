@@ -1137,6 +1137,13 @@ async function resolveMediaInfo(msgId) {
  * @param {object} opts - { msgId, mode: 'save'|'play', mimeType?, playerContainerId? }
  */
 function enqueueDownload(opts) {
+  // Prevent duplicate: don't add same msgId if already queued or downloading
+  const isDuplicate = _downloadQueue.some(i => i.msgId === opts.msgId && (i.status === 'queued' || i.status === 'downloading'));
+  if (isDuplicate) {
+    userLog('warn', `⚠️ #${opts.msgId} already in queue`);
+    return;
+  }
+
   const id = ++_queueIdCounter;
   const item = {
     id,
@@ -1249,26 +1256,20 @@ async function processQueue() {
 }
 
 /**
- * Process a 'save' download item (download to disk).
+ * Process a 'save' download item using parallel connections.
  */
 async function processSaveItem(item, info, myDownloadId) {
   const startTime = Date.now();
-  let lastUpdate = 0;
 
-  const buffer = await userClient.client.downloadMedia(info.rawMsg, {
-    progressCallback: (downloaded, total) => {
-      if (_activeDownloadId !== myDownloadId) return; // cancelled
-      const now = Date.now();
-      if (now - lastUpdate < 200 && downloaded < total) return;
-      lastUpdate = now;
-      const elapsed = (now - startTime) / 1000;
-      const speed = Number(downloaded) / (elapsed || 1);
-      const percent = total > 0 ? (Number(downloaded) / Number(total)) * 100 : 0;
-      item.percent = percent;
-      item.speed = speed;
-      renderQueueItemProgress(item);
-    },
-  });
+  const onProgress = (downloaded, total, speed, percent) => {
+    if (_activeDownloadId !== myDownloadId) return;
+    item.percent = percent;
+    item.speed = speed;
+    renderQueueItemProgress(item);
+  };
+  const isCancelled = () => _activeDownloadId !== myDownloadId;
+
+  const buffer = await userClient.downloadParallel(info.rawMsg, onProgress, isCancelled, 4);
 
   if (_activeDownloadId !== myDownloadId) { item.status = 'cancelled'; return; }
   if (!buffer) throw new Error('Download returned empty.');
@@ -1288,30 +1289,23 @@ async function processSaveItem(item, info, myDownloadId) {
 }
 
 /**
- * Process a 'play' download item (stream to player).
+ * Process a 'play' download item using parallel connections.
  */
 async function processPlayItem(item, info, myDownloadId) {
   const pc = document.getElementById(item.playerContainerId);
   if (pc) { pc.classList.remove('hidden'); pc.innerHTML = '<div class="text-dim" style="padding:8px; font-size:0.82rem;">⏳ Downloading for playback...</div>'; }
 
-  const startTime = Date.now();
-  let lastUpdate = 0;
   const mimeType = item.mimeType || info.mimeType || 'video/mp4';
 
-  const buffer = await userClient.client.downloadMedia(info.rawMsg, {
-    progressCallback: (downloaded, total) => {
-      if (_activeDownloadId !== myDownloadId) return;
-      const now = Date.now();
-      if (now - lastUpdate < 200 && downloaded < total) return;
-      lastUpdate = now;
-      const elapsed = (now - startTime) / 1000;
-      const speed = Number(downloaded) / (elapsed || 1);
-      const percent = total > 0 ? (Number(downloaded) / Number(total)) * 100 : 0;
-      item.percent = percent;
-      item.speed = speed;
-      renderQueueItemProgress(item);
-    },
-  });
+  const onProgress = (downloaded, total, speed, percent) => {
+    if (_activeDownloadId !== myDownloadId) return;
+    item.percent = percent;
+    item.speed = speed;
+    renderQueueItemProgress(item);
+  };
+  const isCancelled = () => _activeDownloadId !== myDownloadId;
+
+  const buffer = await userClient.downloadParallel(info.rawMsg, onProgress, isCancelled, 4);
 
   if (_activeDownloadId !== myDownloadId) { item.status = 'cancelled'; if (pc) pc.innerHTML = ''; return; }
   if (!buffer || buffer.length === 0) { if (pc) pc.innerHTML = '<div class="text-dim" style="padding:8px;">Failed.</div>'; throw new Error('Empty buffer'); }

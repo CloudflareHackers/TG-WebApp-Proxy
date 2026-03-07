@@ -12,6 +12,10 @@ import { NewMessage } from 'telegram/events';
 import bigInt from 'big-integer';
 import { getUserSettings } from './settings.js';
 
+const MIN_PARALLEL_SIZE = 1024 * 1024; // 1MB — below this, single-connection is fine
+const DEFAULT_CHUNK_SIZE = 524288; // 512KB — MTProto standard max
+const MAX_CONNECTIONS = 8;
+
 // ===== Multi-Account Storage =====
 const ACCOUNTS_KEY = 'tgcf_accounts';
 const ACTIVE_ACCOUNT_KEY = 'tgcf_active_account';
@@ -572,6 +576,216 @@ export class TGUserClient {
       const blob = new Blob([buffer], { type: mimeType });
       return URL.createObjectURL(blob);
     } catch { return null; }
+  }
+
+  // ===== PARALLEL DOWNLOAD =====
+
+  /**
+   * Extract file location and metadata from a raw GramJS message for parallel download.
+   */
+  _extractFileLocation(message) {
+    const media = message.media;
+    if (!media) return null;
+
+    if (media.document) {
+      const doc = media.document;
+      return {
+        fileLocation: new Api.InputDocumentFileLocation({
+          id: doc.id,
+          accessHash: doc.accessHash,
+          fileReference: doc.fileReference,
+          thumbSize: '',
+        }),
+        dcId: doc.dcId,
+        fileSize: Number(doc.size || 0),
+      };
+    } else if (media.photo) {
+      const photo = media.photo;
+      const sizes = photo.sizes || [];
+      const largest = sizes[sizes.length - 1];
+      return {
+        fileLocation: new Api.InputPhotoFileLocation({
+          id: photo.id,
+          accessHash: photo.accessHash,
+          fileReference: photo.fileReference,
+          thumbSize: largest ? largest.type : '',
+        }),
+        dcId: photo.dcId,
+        fileSize: largest?.size ? Number(largest.size) : 0,
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Download media with parallel connections for faster speed.
+   * Falls back to single-connection for small files.
+   * @param {object} message - raw GramJS message
+   * @param {Function} onProgress - (downloaded, total) => void
+   * @param {Function} isCancelled - () => boolean, return true to abort
+   * @param {number} connections - number of parallel connections (1-8)
+   * @returns {Buffer}
+   */
+  async downloadParallel(message, onProgress, isCancelled, connections = 4) {
+    if (!this.client || !this.connected) throw new Error('Not connected.');
+    connections = Math.min(Math.max(1, connections), MAX_CONNECTIONS);
+
+    const loc = this._extractFileLocation(message);
+
+    // For small files or if no file location, use simple single-connection download
+    if (!loc || loc.fileSize < MIN_PARALLEL_SIZE) {
+      return this._downloadSingleWithProgress(message, onProgress, isCancelled);
+    }
+
+    const { fileLocation, dcId, fileSize } = loc;
+    const chunkSize = DEFAULT_CHUNK_SIZE;
+    const totalChunks = Math.ceil(fileSize / chunkSize);
+    const actualConnections = Math.min(connections, totalChunks);
+    const chunksPerWorker = Math.ceil(totalChunks / actualConnections);
+    const maxSenders = Math.min(actualConnections, MAX_CONNECTIONS);
+
+    this.onLog('dim', `Parallel: ${totalChunks} chunks, ${actualConnections} workers, ${maxSenders} DC conns`);
+
+    // Create DC senders
+    const senders = [];
+    try {
+      for (let i = 0; i < maxSenders; i++) {
+        const sender = await this.client.getSender(dcId);
+        senders.push(sender);
+      }
+    } catch (e) {
+      this.onLog('warn', `Only ${senders.length} senders created: ${e.message}`);
+      if (senders.length === 0) {
+        this.onLog('warn', 'Falling back to single-connection...');
+        return this._downloadSingleWithProgress(message, onProgress, isCancelled);
+      }
+    }
+
+    const startTime = Date.now();
+    const workerProgress = new Array(actualConnections).fill(0);
+
+    // Build tasks
+    const tasks = [];
+    for (let i = 0; i < actualConnections; i++) {
+      const startChunk = i * chunksPerWorker;
+      const endChunk = Math.min(startChunk + chunksPerWorker, totalChunks);
+      if (startChunk >= totalChunks) break;
+
+      const startOffset = startChunk * chunkSize;
+      const endOffset = Math.min(endChunk * chunkSize, fileSize);
+
+      tasks.push(
+        this._downloadRange(fileLocation, senders[i % senders.length], startOffset, endOffset, i, workerProgress, startTime, fileSize, chunkSize, onProgress, isCancelled)
+      );
+    }
+
+    // Run all workers in parallel
+    let results;
+    try {
+      results = await Promise.all(tasks);
+    } catch (e) {
+      // If parallel fails, try single
+      this.onLog('warn', `Parallel failed: ${e.message}. Retrying single...`);
+      return this._downloadSingleWithProgress(message, onProgress, isCancelled);
+    }
+
+    // Merge all chunks
+    const totalBytes = results.reduce((sum, buf) => sum + buf.length, 0);
+    const merged = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of results) {
+      merged.set(new Uint8Array(chunk.buffer || chunk), offset);
+      offset += chunk.length;
+    }
+
+    return Buffer.from(merged);
+  }
+
+  /**
+   * Download a byte range using upload.GetFile with retries and DC migration.
+   */
+  async _downloadRange(fileLocation, sender, startOffset, endOffset, workerIdx, workerProgress, startTime, totalFileSize, chunkSize, onProgress, isCancelled) {
+    const chunks = [];
+    let currentOffset = startOffset;
+    let retries = 0;
+    const MAX_RETRIES = 3;
+
+    while (currentOffset < endOffset) {
+      if (isCancelled && isCancelled()) throw new Error('Cancelled');
+
+      const request = new Api.upload.GetFile({
+        location: fileLocation,
+        offset: bigInt(currentOffset),
+        limit: chunkSize,
+      });
+
+      let result;
+      try {
+        result = await this.client.invokeWithSender(request, sender);
+        retries = 0;
+      } catch (e) {
+        if (e.message && e.message.includes('FILE_MIGRATE_')) {
+          const newDc = parseInt(e.message.match(/\d+/)?.[0] || '0');
+          if (newDc) {
+            sender = await this.client.getSender(newDc);
+            result = await this.client.invokeWithSender(request, sender);
+          } else throw e;
+        } else if (retries < MAX_RETRIES) {
+          retries++;
+          await new Promise(r => setTimeout(r, 1000 * retries));
+          try { sender = await this.client.getSender(undefined); } catch { await new Promise(r => setTimeout(r, 3000)); sender = await this.client.getSender(undefined); }
+          continue;
+        } else throw e;
+      }
+
+      const bytes = result.bytes;
+      chunks.push(bytes);
+      currentOffset += bytes.length;
+
+      // Update progress
+      workerProgress[workerIdx] = currentOffset - startOffset;
+      const totalDownloaded = workerProgress.reduce((a, b) => a + b, 0);
+      if (onProgress) {
+        const elapsed = (Date.now() - startTime) / 1000;
+        const speed = totalDownloaded / (elapsed || 1);
+        const percent = totalFileSize > 0 ? (totalDownloaded / totalFileSize) * 100 : 0;
+        onProgress(totalDownloaded, totalFileSize, speed, percent);
+      }
+
+      if (bytes.length < chunkSize) break;
+    }
+
+    // Merge worker chunks
+    const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+    const merged = Buffer.alloc(totalLen);
+    let pos = 0;
+    for (const chunk of chunks) {
+      chunk.copy ? chunk.copy(merged, pos) : merged.set(new Uint8Array(chunk), pos);
+      pos += chunk.length;
+    }
+    return merged;
+  }
+
+  /**
+   * Single-connection download with progress callback (fallback).
+   */
+  async _downloadSingleWithProgress(message, onProgress, isCancelled) {
+    const startTime = Date.now();
+    let lastUpdate = 0;
+    const buffer = await this.client.downloadMedia(message, {
+      progressCallback: (downloaded, total) => {
+        if (isCancelled && isCancelled()) return;
+        const now = Date.now();
+        if (now - lastUpdate < 200 && downloaded < total) return;
+        lastUpdate = now;
+        const elapsed = (now - startTime) / 1000;
+        const speed = Number(downloaded) / (elapsed || 1);
+        const percent = total > 0 ? (Number(downloaded) / Number(total)) * 100 : 0;
+        if (onProgress) onProgress(Number(downloaded), Number(total), speed, percent);
+      },
+    });
+    if (!buffer) throw new Error('Download returned empty.');
+    return buffer;
   }
 
   // ===== LISTEN FOR NEW MESSAGES =====
