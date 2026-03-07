@@ -42,13 +42,9 @@ export async function onRequest(context) {
   if (upgradeHeader && upgradeHeader.toLowerCase() === 'websocket') {
     try {
       // Create upstream fetch with WebSocket upgrade
-      // Must use https:// (not wss://) with Upgrade: websocket header
-      const upstreamResp = await fetch(targetUrl, {
+      const upstreamResp = await fetch(`https://${targetHost}/${remainingPath}`, {
         headers: {
           'Upgrade': 'websocket',
-          'Connection': 'Upgrade',
-          'Host': targetHost,
-          'Origin': `https://${targetHost}`,
         },
       });
 
