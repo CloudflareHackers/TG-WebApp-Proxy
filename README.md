@@ -82,6 +82,22 @@ npx wrangler deploy
 3. Enter your worker domain: `tg-ws-api.your-account.workers.dev`
 4. Save — all Telegram connections now route through your proxy
 
+### Free vs Paid Proxy Plan
+
+The proxy works on the **free Cloudflare plan** by default (SQLite-backed Durable Objects).
+
+For heavy usage, upgrade to the **Workers Paid plan** ($5/month) and change `wrangler.toml`:
+
+```toml
+# Free plan (default):
+new_sqlite_classes = ["WebSocketProxy"]
+
+# Paid plan (higher limits):
+new_classes = ["WebSocketProxy"]
+```
+
+**Paid plan benefits:** 10M+ requests/month, 1M+ DO operations, global low-latency, no daily limits, detailed analytics.
+
 ## 🔐 Default API Credentials
 
 The app comes pre-filled with Telegram Web's public API credentials:
