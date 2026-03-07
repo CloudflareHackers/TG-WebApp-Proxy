@@ -823,18 +823,20 @@ function renderDialogs(dialogs) {
   for (const d of dialogs) {
     const item = document.createElement('div');
     item.className = 'msg-item convo-item';
-    const icon = d.isChannel ? '📢' : d.isGroup ? '👥' : '👤';
+    const icon = d.isSelf ? '🔖' : d.isChannel ? '📢' : d.isGroup ? '👥' : '👤';
     const time = d.date ? d.date.toLocaleTimeString() : '';
     const preview = d.lastMessage.length > 80 ? d.lastMessage.slice(0, 80) + '...' : (d.lastMessage || '[No messages]');
     const hasUnread = d.unreadCount > 0;
     const unread = hasUnread ? `<span style="background: var(--primary); color: white; border-radius: 10px; padding: 1px 6px; font-size: 0.7rem; margin-left: 4px;">${d.unreadCount}</span>` : '';
     if (!hasUnread) item.style.opacity = '0.6';
+    const meta = [d.username ? `@${d.username}` : '', d.tgId ? `ID:${d.tgId}` : ''].filter(Boolean).join(' • ');
     item.innerHTML = `
       <div class="msg-sender">
         <span style="font-size: 1.1rem;">${icon}</span>
         <span class="msg-sender-name" style="flex: 1;">${escHtml(d.title)}${unread}</span>
         <span class="msg-time">${time}</span>
       </div>
+      ${meta ? `<div class="text-dim" style="font-size:0.72rem; margin-bottom:2px;">${escHtml(meta)}</div>` : ''}
       <div class="msg-text">${escHtml(preview)}</div>
     `;
     item.addEventListener('click', () => openChat(d));
@@ -845,7 +847,12 @@ function renderDialogs(dialogs) {
 
 function filterDialogs(query) {
   if (!query) { renderDialogs(dialogsCache); return; }
-  renderDialogs(dialogsCache.filter(d => d.title.toLowerCase().includes(query)));
+  const q = query.toLowerCase();
+  renderDialogs(dialogsCache.filter(d =>
+    d.title.toLowerCase().includes(q) ||
+    (d.username && d.username.toLowerCase().includes(q)) ||
+    (d.tgId && d.tgId.includes(q))
+  ));
 }
 function filterDialogsByType(type) {
   if (type === 'all') { renderDialogs(dialogsCache); return; }

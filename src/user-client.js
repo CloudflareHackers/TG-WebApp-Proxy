@@ -315,18 +315,28 @@ export class TGUserClient {
   async getDialogs(limit = 50) {
     if (!this.client || !this.connected) throw new Error('Not connected.');
     const dialogs = await this.client.getDialogs({ limit });
-    return dialogs.map(d => ({
-      id: d.id?.toString(),
-      title: d.title || d.name || 'Unknown',
-      unreadCount: d.unreadCount || 0,
-      lastMessage: d.message?.text || d.message?.message || '',
-      date: d.date ? new Date(d.date * 1000) : null,
-      isChannel: d.isChannel,
-      isGroup: d.isGroup,
-      isUser: d.isUser,
-      entity: d.entity,
-      dialog: d,
-    }));
+    const me = this.me;
+    return dialogs.map(d => {
+      const entity = d.entity;
+      const isSelf = d.isUser && entity?.id && me?.id && entity.id.toString() === me.id.toString();
+      const username = entity?.username || '';
+      const tgId = entity?.id?.toString() || d.id?.toString() || '';
+      return {
+        id: d.id?.toString(),
+        title: isSelf ? 'Saved Messages' : (d.title || d.name || 'Unknown'),
+        unreadCount: d.unreadCount || 0,
+        lastMessage: d.message?.text || d.message?.message || '',
+        date: d.date ? new Date(d.date * 1000) : null,
+        isChannel: d.isChannel,
+        isGroup: d.isGroup,
+        isUser: d.isUser,
+        isSelf,
+        username,
+        tgId,
+        entity: d.entity,
+        dialog: d,
+      };
+    });
   }
 
   // ===== MESSAGES =====
