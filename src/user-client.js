@@ -528,7 +528,8 @@ export class TGUserClient {
    */
   async getPhotoThumb(message) {
     try {
-      const buffer = await this.downloadMedia(message, true);
+      // Download medium-size photo (not tiny thumb) for better quality
+      const buffer = await this.downloadMedia(message, false);
       if (!buffer || buffer.length === 0) return null;
       const base64 = Buffer.from(buffer).toString('base64');
       return `data:image/jpeg;base64,${base64}`;
