@@ -342,6 +342,10 @@ function onUserLoggedIn() {
     if (matchedDialog) {
       matchedDialog.lastMessage = msg.text || (msg.media ? '[Media]' : '');
       matchedDialog.date = msg.date || new Date();
+      // Increment unread count if this chat is NOT currently open
+      if (!currentDialogId || !possibleIds.includes(currentDialogId)) {
+        matchedDialog.unreadCount = (matchedDialog.unreadCount || 0) + 1;
+      }
       // Re-render chat list with current filter
       const activeFilter = document.querySelector('.chat-filter-btn.active')?.dataset?.filter || 'all';
       filterDialogsByType(activeFilter);
