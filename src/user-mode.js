@@ -9,8 +9,24 @@ import { formatFileSize, getFileIcon } from './link-parser.js';
 let userClient = null;
 let currentEntity = null;
 let currentDialogId = null;
+let currentDialogTitle = null;
 let dialogsCache = [];
-let userReplyToMsgId = null; // Reply-to state for user mode
+let userReplyToMsgId = null;
+let oldestMsgId = 0; // For pagination (load older messages)
+let isLoadingOlder = false;
+
+// Persist UI state
+const USER_UI_KEY = 'tgcf_user_ui';
+function saveUIState() {
+  localStorage.setItem(USER_UI_KEY, JSON.stringify({
+    filter: document.querySelector('.chat-filter-btn.active')?.dataset?.filter || 'all',
+    openChatId: currentDialogId || null,
+    openChatTitle: currentDialogTitle || null,
+  }));
+}
+function getUIState() {
+  try { return JSON.parse(localStorage.getItem(USER_UI_KEY)) || {}; } catch { return {}; }
+}
 
 export function renderUserMode(container, addLog, switchMode) {
   container.innerHTML = `
@@ -180,6 +196,8 @@ function bindUserEvents(addLog, switchMode) {
     document.getElementById('userChatsCard')?.classList.remove('hidden');
     currentEntity = null;
     currentDialogId = null;
+    currentDialogTitle = null;
+    saveUIState();
   });
   document.getElementById('btnUserSend')?.addEventListener('click', () => handleUserSendMessage());
   document.getElementById('userMsgInput')?.addEventListener('keydown', (e) => {
@@ -201,6 +219,7 @@ function bindUserEvents(addLog, switchMode) {
       btn.classList.add('active');
       const filter = btn.dataset.filter;
       filterDialogsByType(filter);
+      saveUIState();
     });
   });
 }
@@ -287,7 +306,19 @@ function onUserLoggedIn() {
   }
   // Show chats
   document.getElementById('userChatsCard')?.classList.remove('hidden');
-  loadDialogs();
+  loadDialogs().then(() => {
+    // Restore saved UI state (filter, open chat)
+    const ui = getUIState();
+    if (ui.filter && ui.filter !== 'all') {
+      document.querySelectorAll('.chat-filter-btn').forEach(b => b.classList.remove('active'));
+      const btn = document.querySelector(`.chat-filter-btn[data-filter="${ui.filter}"]`);
+      if (btn) { btn.classList.add('active'); filterDialogsByType(ui.filter); }
+    }
+    if (ui.openChatId && dialogsCache.length) {
+      const d = dialogsCache.find(d => d.id === ui.openChatId);
+      if (d) openChat(d);
+    }
+  });
   // Listen for new messages — only append if it belongs to the currently open chat
   userClient.startListening((msg) => {
     if (!currentEntity || !currentDialogId) return;
@@ -396,7 +427,10 @@ function filterDialogsByType(type) {
 async function openChat(dialog) {
   currentEntity = dialog.entity;
   currentDialogId = dialog.id;
+  currentDialogTitle = dialog.title;
   userReplyToMsgId = null;
+  oldestMsgId = 0;
+  saveUIState();
 
   document.getElementById('userChatsCard')?.classList.add('hidden');
   document.getElementById('userMessagesCard')?.classList.remove('hidden');
@@ -414,7 +448,15 @@ async function openChat(dialog) {
       appendUserMessage(msg);
       if (msg.id > maxId) maxId = msg.id;
     }
+    // Track oldest message for pagination
+    if (messages.length > 0) {
+      oldestMsgId = messages[messages.length - 1].id; // newest-first, last = oldest
+    }
+
     list.scrollTop = list.scrollHeight;
+
+    // Scroll-up to load older messages
+    list.addEventListener('scroll', handleScrollLoadOlder);
 
     // Mark messages as read (respects stealth mode)
     if (maxId > 0) {
@@ -424,6 +466,56 @@ async function openChat(dialog) {
     userLog('error', `Failed to load messages: ${e.message}`);
     document.getElementById('messageList').innerHTML = '<p class="text-dim">Failed to load messages.</p>';
   }
+}
+
+// Load older messages when scrolling to top
+async function handleScrollLoadOlder() {
+  const list = document.getElementById('messageList');
+  if (!list || !userClient || !currentEntity || isLoadingOlder || oldestMsgId <= 0) return;
+  if (list.scrollTop > 50) return; // Only trigger near top
+
+  isLoadingOlder = true;
+  const prevHeight = list.scrollHeight;
+
+  try {
+    const older = await userClient.getMessages(currentEntity, 20, oldestMsgId);
+    if (older.length === 0) {
+      oldestMsgId = 0; // No more messages
+      isLoadingOlder = false;
+      return;
+    }
+
+    // Prepend older messages (they come newest-first)
+    for (const msg of older) {
+      prependUserMessage(msg);
+      if (msg.id < oldestMsgId || oldestMsgId === 0) oldestMsgId = msg.id;
+    }
+
+    // Maintain scroll position
+    list.scrollTop = list.scrollHeight - prevHeight;
+  } catch {} 
+  finally { isLoadingOlder = false; }
+}
+
+function prependUserMessage(msg) {
+  const list = document.getElementById('messageList');
+  if (!list) return;
+  const div = document.createElement('div');
+  const time = smartDate(msg.date);
+  const isOut = msg.out;
+  let replyBar = '';
+  if (msg.replyToMsgId) {
+    replyBar = `<div style="border-left:3px solid var(--primary); padding:2px 8px; margin-bottom:4px; font-size:0.75rem; color:var(--text-dim);">↩ Reply to #${msg.replyToMsgId}</div>`;
+  }
+  if (isOut) {
+    div.className = 'reply-sent';
+    div.innerHTML = `${replyBar}${msg.text ? `<div class="reply-sent-text">${escHtml(msg.text)}</div>` : ''}${msg.media ? renderMediaBadge(msg) : ''}<div class="reply-sent-time">${time}</div>`;
+  } else {
+    div.className = 'reply-received clickable-msg';
+    div.innerHTML = `${replyBar}${msg.media ? renderMediaBadge(msg) : ''}${msg.text ? `<div class="reply-received-text">${escHtml(msg.text)}</div>` : ''}<div class="reply-received-time">${time} • tap to reply ↩</div>`;
+    div.addEventListener('click', () => setUserReplyTo(msg.id, msg.text || '[Media]'));
+  }
+  list.prepend(div);
 }
 
 function smartDate(date) {
