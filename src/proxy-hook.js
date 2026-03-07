@@ -51,27 +51,21 @@ class ProxiedWebSocket extends _OriginalWebSocket {
         const host = match[1]; // e.g. venus-1.web.telegram.org
         const path = match[2] || ''; // e.g. /apiws
 
-        // Get proxy domain from settings (external worker) or fallback to same origin
-        let proxyDomain = '';
+        // Get proxy domain from settings — default is the deployed worker
+        let proxyDomain = 'tg-ws-api.hashhackersapi.workers.dev';
         try {
           const raw = localStorage.getItem('tgcf_settings');
           if (raw) {
             const s = JSON.parse(raw);
-            proxyDomain = s.proxyDomain || '';
+            proxyDomain = s.proxyDomain || proxyDomain;
           }
         } catch {}
 
-        let proxyUrl;
-        if (proxyDomain) {
-          // External CF Worker: wss://worker-domain/host/path
-          proxyUrl = `wss://${proxyDomain}/${host}${path}`;
-        } else {
-          // Same-origin Pages Function fallback: wss://origin/api/host/path
-          proxyUrl = `wss://${window.location.host}/api/${host}${path}`;
-        }
+        // Route through CF Worker with Durable Objects
+        const proxyUrl = `wss://${proxyDomain}/${host}${path}`;
 
         // Drop subprotocols — CF Workers WebSocketPair doesn't support protocol negotiation
-        proxyLog('info', `🌐 Proxy: ${host}${path} → ${proxyDomain || 'local'}`);
+        proxyLog('info', `🌐 Proxy: ${host}${path} → ${proxyDomain}`);
         super(proxyUrl);
         return;
       }
