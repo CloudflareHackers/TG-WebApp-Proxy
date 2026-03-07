@@ -178,7 +178,7 @@ export async function saveFile(fileData) {
   });
 }
 
-export async function getAllFiles(limit = 100) {
+export async function getAllFiles(limit = 1000) {
   if (!db) return [];
   return new Promise((resolve) => {
     const tx = db.transaction('files', 'readonly');
@@ -186,7 +186,7 @@ export async function getAllFiles(limit = 100) {
     request.onsuccess = () => {
       const results = request.result || [];
       results.sort((a, b) => new Date(b.date) - new Date(a.date));
-      resolve(results.slice(0, limit));
+      resolve(limit ? results.slice(0, limit) : results);
     };
     request.onerror = () => resolve([]);
   });

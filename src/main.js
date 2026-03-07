@@ -216,9 +216,9 @@ async function restoreFromDB() {
       renderConversationItem(convo);
     }
     
-    // Restore files
-    const files = await getAllFiles(50);
-    for (const file of files.reverse()) {
+    // Restore files (all, no limit)
+    const files = await getAllFiles(500);
+    for (const file of files) {
       renderRestoredFile(file);
     }
     
