@@ -638,13 +638,18 @@ async function handleUserSendMessage() {
 
   try {
     await userClient.sendMessage(currentEntity, text, userReplyToMsgId || undefined);
-    appendUserMessage({
+    const sentMsg = {
       id: Date.now(),
       text,
       date: new Date(),
       out: true,
       media: null,
-    });
+      replyToMsgId: userReplyToMsgId || null,
+    };
+    appendUserMessage(sentMsg);
+    // Force scroll to bottom after sending
+    const msgList = document.getElementById('messageList');
+    if (msgList) setTimeout(() => { msgList.scrollTop = msgList.scrollHeight; }, 50);
     input.value = '';
     input.placeholder = 'Type a message...';
     userReplyToMsgId = null;
