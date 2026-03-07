@@ -98,6 +98,7 @@ function renderApp(hasSavedCreds) {
           Get API ID & Hash from <a href="https://my.telegram.org" target="_blank" style="color: var(--primary)">my.telegram.org</a> → 
           API Development Tools. Bot token from <a href="https://t.me/BotFather" target="_blank" style="color: var(--primary)">@BotFather</a>.
         </p>
+        ${hasSavedCreds ? `<button class="btn-primary mt-12" id="btnSaveReconnect">💾 Save & Reconnect</button>` : ''}
       </div>
       ${hasSavedCreds ? '' : `
       <div class="mt-16" style="display: flex; gap: 8px;">
@@ -268,6 +269,8 @@ function bindEvents() {
   if (btnShowCreds) btnShowCreds.addEventListener('click', () => {
     document.getElementById('credsForm').classList.toggle('hidden');
   });
+  const btnSaveReconnect = document.getElementById('btnSaveReconnect');
+  if (btnSaveReconnect) btnSaveReconnect.addEventListener('click', handleSaveReconnect);
   document.getElementById('btnCloseModal').addEventListener('click', closeReplyModal);
   document.getElementById('btnSendReply').addEventListener('click', handleSendReply);
   document.getElementById('replyInput').addEventListener('keydown', (e) => {
@@ -298,6 +301,48 @@ function bindEvents() {
       document.getElementById('btnFetchInfo').disabled = true;
     }
   });
+}
+
+// ===== Save & Reconnect (edit creds in saved mode) =====
+async function handleSaveReconnect() {
+  const apiId = document.getElementById('apiId').value.trim();
+  const apiHash = document.getElementById('apiHash').value.trim();
+  const botToken = document.getElementById('botToken').value.trim();
+  if (!apiId || !apiHash || !botToken) { addLog('error', 'Please fill in all credentials.'); return; }
+
+  const btn = document.getElementById('btnSaveReconnect');
+  btn.disabled = true;
+  btn.innerHTML = '⏳ Saving...';
+
+  // Disconnect current session
+  if (downloader && isConnected) {
+    await downloader.disconnect();
+    isConnected = false;
+  }
+
+  // Clear old session (different bot token = different session)
+  const temp = new TGDownloader(() => {}, () => {});
+  temp.clearSession();
+  listenersStarted = false;
+
+  // Connect with new creds
+  setConnectionStatus('connecting');
+  try {
+    downloader = new TGDownloader(addLog, updateProgress);
+    await downloader.connect(apiId, apiHash, botToken);
+    isConnected = true;
+    setConnectionStatus('connected');
+    startListeners();
+    document.getElementById('credsForm').classList.add('hidden');
+    addLog('success', '✅ Credentials saved & reconnected with new bot!');
+    btn.innerHTML = '💾 Save & Reconnect';
+  } catch (error) {
+    setConnectionStatus('disconnected');
+    addLog('error', `Failed: ${error.message}`);
+    btn.innerHTML = '💾 Save & Reconnect';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ===== Disconnect Handler (saved-creds mode) =====
