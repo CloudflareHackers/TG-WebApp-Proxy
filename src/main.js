@@ -10,6 +10,9 @@ import { TGDownloader, getApi } from './telegram-client.js';
 import { parseTelegramLink, describeParsedLink, formatFileSize, getFileIcon } from './link-parser.js';
 import { initDB, addMessageToConversation, addBotReplyToConversation, getAllConversations, getConversation, saveFile, getAllFiles, markFileDownloaded, clearAllData, deleteConversation, clearConversations, clearFiles } from './db.js';
 import { getSettings, saveSettings, getChunkSizeOptions, getDefaults } from './settings.js';
+import { renderUserMode } from './user-mode.js';
+
+const MODE_KEY = 'tgcf_mode'; // 'bot' | 'user'
 
 // ===== State =====
 let downloader = null;
@@ -18,8 +21,57 @@ let isDownloading = false;
 let currentFileRef = null;
 let manuallyDisconnected = false; // Prevents auto-reconnect after manual disconnect
 
+// ===== Mode Router =====
+function getSavedMode() { return localStorage.getItem(MODE_KEY); }
+function setSavedMode(mode) { localStorage.setItem(MODE_KEY, mode); }
+
+function showLandingPage() {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="header">
+      <h1>📥 Telegram Client</h1>
+      <p>Client-side MTProto • No file size limits • Powered by GramJS</p>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+      <div class="card" style="cursor: pointer; text-align: center; transition: transform 0.15s, border-color 0.15s;" id="chooseBotMode"
+           onmouseover="this.style.borderColor='var(--primary)'; this.style.transform='translateY(-2px)'"
+           onmouseout="this.style.borderColor='var(--border)'; this.style.transform='none'">
+        <div style="font-size: 3rem; margin-bottom: 12px;">🤖</div>
+        <h2 style="margin-bottom: 8px;">Bot Mode</h2>
+        <p class="text-dim" style="font-size: 0.85rem;">Download files via bot token. Receive files sent to your bot. Reply to messages.</p>
+      </div>
+      <div class="card" style="cursor: pointer; text-align: center; transition: transform 0.15s, border-color 0.15s;" id="chooseUserMode"
+           onmouseover="this.style.borderColor='var(--accent)'; this.style.transform='translateY(-2px)'"
+           onmouseout="this.style.borderColor='var(--border)'; this.style.transform='none'">
+        <div style="font-size: 3rem; margin-bottom: 12px;">👤</div>
+        <h2 style="margin-bottom: 8px;">User Mode</h2>
+        <p class="text-dim" style="font-size: 0.85rem;">Login with your phone number. Browse all chats, view photos, download media.</p>
+      </div>
+    </div>
+    <p style="text-align: center; margin-top: 24px; font-size: 0.78rem; color: var(--text-dim);">
+      🔒 Everything runs in your browser. Nothing is sent to any server.
+    </p>
+  `;
+  document.getElementById('chooseBotMode').addEventListener('click', () => {
+    setSavedMode('bot');
+    initBotMode();
+  });
+  document.getElementById('chooseUserMode').addEventListener('click', () => {
+    setSavedMode('user');
+    initUserMode();
+  });
+}
+
+function initUserMode() {
+  const app = document.getElementById('app');
+  renderUserMode(app, addLog, (mode) => {
+    if (mode === 'bot') { setSavedMode('bot'); initBotMode(); }
+    else { setSavedMode(null); showLandingPage(); }
+  });
+}
+
 // ===== Initialize UI =====
-async function init() {
+async function initBotMode() {
   // Initialize IndexedDB
   await initDB();
 
@@ -49,6 +101,18 @@ async function init() {
     autoReconnect(saved);
   } else {
     addLog('dim', 'Enter your credentials and connect.');
+  }
+}
+
+async function init() {
+  await initDB();
+  const savedMode = getSavedMode();
+  if (savedMode === 'bot') {
+    initBotMode();
+  } else if (savedMode === 'user') {
+    initUserMode();
+  } else {
+    showLandingPage();
   }
 }
 
@@ -216,7 +280,10 @@ function renderApp(hasSavedCreds) {
     <div class="card">
       <div class="flex-between mb-8">
         <h2><span class="icon">📋</span> Log</h2>
-        <button class="btn-outline btn-sm" id="btnClearLog">Clear</button>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-outline btn-sm" id="btnClearLog">Clear</button>
+          <button class="btn-outline btn-sm" id="btnSwitchToUser">👤 User Mode</button>
+        </div>
       </div>
       <div class="log-container" id="logContainer"></div>
     </div>
@@ -439,6 +506,12 @@ function bindEvents() {
     if (e.target.id === 'replyModal') closeReplyModal();
   });
   
+  // Switch to user mode
+  document.getElementById('btnSwitchToUser')?.addEventListener('click', () => {
+    setSavedMode('user');
+    initUserMode();
+  });
+
   // Settings bindings
   document.getElementById('btnSaveSettings').addEventListener('click', handleSaveSettings);
   document.getElementById('btnResetSettings').addEventListener('click', handleResetSettings);
