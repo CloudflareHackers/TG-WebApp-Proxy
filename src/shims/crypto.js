@@ -9,45 +9,32 @@ export function randomBytes(size) {
   return buf;
 }
 
+/**
+ * createHash that matches GramJS's browser Hash class interface.
+ * Uses Web Crypto API for correct hashing (async digest).
+ * GramJS's Helpers.sha256 does `await hash.digest()` so async is fine.
+ */
 export function createHash(algorithm) {
-  // Simple hash implementation for GramJS needs
   const algo = algorithm.toLowerCase().replace('-', '');
-  let data = Buffer.alloc(0);
-  
+  const algoMap = { sha1: 'SHA-1', sha256: 'SHA-256', sha512: 'SHA-512' };
+  const webAlgo = algoMap[algo];
+
+  // Store data as Uint8Array
+  let data = null;
+
   return {
     update(input) {
-      if (typeof input === 'string') {
-        data = Buffer.concat([data, Buffer.from(input)]);
-      } else {
-        data = Buffer.concat([data, Buffer.from(input)]);
-      }
+      data = new Uint8Array(input instanceof Uint8Array ? input : Buffer.from(input));
       return this;
     },
-    async _digest() {
-      const algoMap = {
-        sha1: 'SHA-1',
-        sha256: 'SHA-256',
-        sha512: 'SHA-512',
-        md5: 'MD5',
-      };
-      const webAlgo = algoMap[algo];
-      if (!webAlgo) throw new Error(`Unsupported hash: ${algorithm}`);
-      const hashBuffer = await globalThis.crypto.subtle.digest(webAlgo, data);
-      return Buffer.from(hashBuffer);
-    },
-    digest(encoding) {
-      // GramJS often calls digest synchronously, but we need async Web Crypto
-      // Use a synchronous fallback
-      if (algo === 'sha256') {
-        return syncSha256(data, encoding);
+    async digest() {
+      if (!data) return Buffer.alloc(0);
+      if (webAlgo) {
+        const hashBuffer = await globalThis.crypto.subtle.digest(webAlgo, data);
+        return Buffer.from(hashBuffer);
       }
-      if (algo === 'sha1') {
-        return syncSha1(data, encoding);
-      }
-      // Fallback - return a dummy (shouldn't be hit in practice)
-      const result = Buffer.alloc(32);
-      if (encoding === 'hex') return result.toString('hex');
-      return result;
+      // Fallback for unsupported algorithms
+      return Buffer.alloc(32);
     }
   };
 }
