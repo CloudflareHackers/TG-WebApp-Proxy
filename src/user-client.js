@@ -209,7 +209,9 @@ export class TGUserClient {
       media: mediaInfo,
       message: m, // raw GramJS message for downloads
       senderId: m.senderId?.toString(),
-      senderName: '', // resolved later if needed
+      senderName: '',
+      replyToMsgId: m.replyTo?.replyToMsgId || null,
+      replyToText: null, // will be filled by UI if needed
     };
   }
 

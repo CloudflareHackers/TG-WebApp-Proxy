@@ -75,7 +75,10 @@ export function renderUserMode(container, addLog, switchMode) {
     <div class="card hidden" id="userChatsCard">
       <div class="flex-between mb-8">
         <h2><span class="icon">💬</span> Chats</h2>
-        <button class="btn-outline btn-sm" id="btnRefreshChats">🔄 Refresh</button>
+        <div style="display:flex;gap:4px;">
+          <button class="btn-outline btn-sm" id="btnRefreshChats">🔄 Refresh</button>
+          <button class="btn-outline btn-sm" id="btnClearReloadChats">🗑️ Clear</button>
+        </div>
       </div>
       <div class="form-group" style="margin-bottom: 8px;">
         <input type="text" id="chatSearch" placeholder="🔍 Search chats..." style="padding: 8px 12px; font-size: 0.88rem;" />
@@ -166,6 +169,12 @@ function bindUserEvents(addLog, switchMode) {
   document.getElementById('btnUserLogin')?.addEventListener('click', () => handleUserLogin());
   document.getElementById('btnUserLogout')?.addEventListener('click', () => handleUserLogout());
   document.getElementById('btnRefreshChats')?.addEventListener('click', () => loadDialogs());
+  document.getElementById('btnClearReloadChats')?.addEventListener('click', () => {
+    dialogsCache = [];
+    const list = document.getElementById('chatList');
+    if (list) list.innerHTML = '<p class="text-dim">Cleared. Refreshing...</p>';
+    loadDialogs();
+  });
   document.getElementById('btnBackToChats')?.addEventListener('click', () => {
     document.getElementById('userMessagesCard')?.classList.add('hidden');
     document.getElementById('userChatsCard')?.classList.remove('hidden');
@@ -417,20 +426,39 @@ async function openChat(dialog) {
   }
 }
 
+function smartDate(date) {
+  if (!date) return '';
+  const now = new Date();
+  const d = date instanceof Date ? date : new Date(date);
+  const isToday = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (isToday) return time;
+  if (isYesterday) return `Yesterday ${time}`;
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
+}
+
 function appendUserMessage(msg) {
   const list = document.getElementById('messageList');
   if (!list) return;
-  // Remove placeholder
   const ph = list.querySelector(':scope > p.text-dim');
   if (ph) ph.remove();
 
   const div = document.createElement('div');
-  const time = msg.date ? msg.date.toLocaleTimeString() : '';
+  const time = smartDate(msg.date);
   const isOut = msg.out;
+
+  // Reply-to context bar
+  let replyBar = '';
+  if (msg.replyToMsgId) {
+    replyBar = `<div style="border-left:3px solid var(--primary); padding:2px 8px; margin-bottom:4px; font-size:0.75rem; color:var(--text-dim);">↩ Reply to #${msg.replyToMsgId}</div>`;
+  }
 
   if (isOut) {
     div.className = 'reply-sent';
     div.innerHTML = `
+      ${replyBar}
       ${msg.text ? `<div class="reply-sent-text">${escHtml(msg.text)}</div>` : ''}
       ${msg.media ? renderMediaBadge(msg) : ''}
       <div class="reply-sent-time">${time}</div>
@@ -438,6 +466,7 @@ function appendUserMessage(msg) {
   } else {
     div.className = 'reply-received clickable-msg';
     div.innerHTML = `
+      ${replyBar}
       ${msg.media ? renderMediaBadge(msg) : ''}
       ${msg.text ? `<div class="reply-received-text">${escHtml(msg.text)}</div>` : ''}
       <div class="reply-received-time">${time} • tap to reply ↩</div>
