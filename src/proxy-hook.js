@@ -13,7 +13,8 @@
 
 const _OriginalWebSocket = window.WebSocket;
 
-const TELEGRAM_WS_PATTERN = /^wss?:\/\/([a-z0-9\-]+\.(?:web\.)?telegram\.org)(\/.*)?$/i;
+// Match Telegram WS URLs with optional port: wss://pluto.web.telegram.org:443/apiws
+const TELEGRAM_WS_PATTERN = /^wss?:\/\/([a-z0-9\-]+\.(?:web\.)?telegram\.org)(?::\d+)?(\/.*)?$/i;
 
 // Log to the app's visible log panel (if it exists)
 function proxyLog(type, msg) {
