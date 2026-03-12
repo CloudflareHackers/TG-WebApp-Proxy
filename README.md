@@ -1,6 +1,6 @@
 # 📥 Telegram Client — Browser-Based MTProto
 
-A full-featured Telegram client running entirely in your browser. No server needed — connects directly to Telegram via MTProto WebSocket using [GramJS](https://gram.js.org).
+A full-featured Telegram client running entirely in your browser. No server needed — connects directly to Telegram via MTProto WebSocket using [teleproto](https://github.com/sanyok12345/teleproto) (actively maintained GramJS fork with up-to-date TL layers).
 
 **[Live Demo](https://tg-file-dl.pages.dev)** • **[Deploy Your Own](#deploy)**
 
@@ -101,7 +101,7 @@ You can use your own from [my.telegram.org](https://my.telegram.org) → API Dev
 ## 🏗️ Architecture
 
 ```
-Browser (GramJS MTProto)
+Browser (teleproto MTProto)
   ↓ WebSocket (direct or via CF Proxy)
 Telegram Servers (DC1-DC5)
 ```
@@ -109,18 +109,19 @@ Telegram Servers (DC1-DC5)
 - **No backend server** — everything runs client-side in the browser
 - **Sessions stored in localStorage** — never leaves your device
 - **IndexedDB** for message/file history persistence
-- **GramJS** for MTProto protocol implementation
+- **teleproto** for MTProto protocol (maintained fork of GramJS with latest TL layers)
 - **Vite** for bundling with tree-shaking
+- **Custom browser shims** — AES-256 crypto, zlib inflate, WebSocket transport
 
 ## 📦 Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
-| MTProto Client | [GramJS](https://gram.js.org) (telegram package) |
+| MTProto Client | [teleproto](https://github.com/sanyok12345/teleproto) (maintained GramJS fork) |
 | Build Tool | [Vite](https://vitejs.dev) |
 | Hosting | [Cloudflare Pages](https://pages.cloudflare.com) |
 | Proxy (optional) | [Cloudflare Workers + Durable Objects](https://github.com/CloudflareHackers/TG-WS-API) |
-| Crypto | Web Crypto API (SHA-256, PBKDF2) |
+| Crypto | Pure-JS AES-256 + Web Crypto API (SHA-256, PBKDF2) |
 | Storage | localStorage + IndexedDB |
 
 ## 🔒 Security
