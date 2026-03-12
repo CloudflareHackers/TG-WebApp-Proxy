@@ -6,7 +6,7 @@
  */
 
 import { TGUserClient, getAccounts, getNextSessionIndex, getActiveAccountIndex, setActiveAccountIndex, removeAccount } from './user-client.js';
-import { getUserSettings, saveUserSettings, getUserDefaults } from './settings.js';
+import { getUserSettings, saveUserSettings, getUserDefaults, getProxySettings, saveProxySettings } from './settings.js';
 import { formatFileSize, getFileIcon } from './link-parser.js';
 
 let userClient = null;
@@ -1428,13 +1428,14 @@ async function handleUserSendMessage() {
 
 function loadUserSettingsUI() {
   const s = getUserSettings();
+  const proxy = getProxySettings(); // Shared proxy
   const el = (id) => document.getElementById(id);
   if (el('userSettingsStealth')) el('userSettingsStealth').checked = !!s.stealthMode;
   if (el('userSettingsAutoPhotos')) el('userSettingsAutoPhotos').checked = s.autoDownloadPhotos !== false;
   if (el('userSettingsNotify')) el('userSettingsNotify').checked = s.notifyNewMessages !== false;
   if (el('userSettingsEnterSend')) el('userSettingsEnterSend').checked = s.sendWithEnter !== false;
-  if (el('userSettingsProxy')) el('userSettingsProxy').checked = !!s.proxyEnabled;
-  if (el('userSettingsProxyDomain')) el('userSettingsProxyDomain').value = s.proxyDomain || '';
+  if (el('userSettingsProxy')) el('userSettingsProxy').checked = !!proxy.proxyEnabled;
+  if (el('userSettingsProxyDomain')) el('userSettingsProxyDomain').value = proxy.proxyDomain || '';
   if (el('userSettingsFontSize')) el('userSettingsFontSize').value = s.fontSize || 'normal';
 }
 
@@ -1444,14 +1445,17 @@ function handleSaveUserSettings() {
   s.autoDownloadPhotos = !!document.getElementById('userSettingsAutoPhotos')?.checked;
   s.notifyNewMessages = !!document.getElementById('userSettingsNotify')?.checked;
   s.sendWithEnter = !!document.getElementById('userSettingsEnterSend')?.checked;
-  s.proxyEnabled = !!document.getElementById('userSettingsProxy')?.checked;
-  let pd = (document.getElementById('userSettingsProxyDomain')?.value || '').trim().replace(/^https?:\/\//i, '').replace(/^wss?:\/\//i, '').replace(/\/+$/, '');
-  s.proxyDomain = pd;
   s.fontSize = document.getElementById('userSettingsFontSize')?.value || 'normal';
   saveUserSettings(s);
+
+  // Save shared proxy settings (syncs to both modes)
+  const proxyEnabled = !!document.getElementById('userSettingsProxy')?.checked;
+  let pd = (document.getElementById('userSettingsProxyDomain')?.value || '').trim().replace(/^https?:\/\//i, '').replace(/^wss?:\/\//i, '').replace(/\/+$/, '');
+  saveProxySettings({ proxyEnabled, proxyDomain: pd });
+
   const status = document.getElementById('userSettingsSaveStatus');
   if (status) { status.textContent = '✅ Saved!'; setTimeout(() => { status.textContent = ''; }, 2000); }
-  userLog('info', `⚙️ Settings saved.`);
+  userLog('info', `⚙️ Settings saved. Proxy: ${proxyEnabled ? 'ON' : 'OFF'}`);
 }
 
 function handleResetUserSettings() {

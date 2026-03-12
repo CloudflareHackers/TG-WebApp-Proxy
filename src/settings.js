@@ -10,6 +10,7 @@
 
 const SETTINGS_KEY_BOT = 'tgcf_settings_bot';
 const SETTINGS_KEY_USER = 'tgcf_settings_user';
+const SETTINGS_KEY_PROXY = 'tgcf_settings_proxy'; // Shared proxy config for all modes
 const LEGACY_KEY = 'tgcf_settings';
 
 const CHUNK_SIZES = [
@@ -94,6 +95,54 @@ export function getUserSettings() {
 
 export function saveUserSettings(settings) {
   localStorage.setItem(SETTINGS_KEY_USER, JSON.stringify(settings));
+}
+
+// ===== Shared Proxy Settings (used by both Bot & User modes) =====
+
+const PROXY_DEFAULTS = { proxyEnabled: false, proxyDomain: '' };
+
+/**
+ * Get shared proxy settings. Migrates from per-mode settings if needed.
+ */
+export function getProxySettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY_PROXY);
+    if (raw) return { ...PROXY_DEFAULTS, ...JSON.parse(raw) };
+    // Migrate: check bot or user settings for existing proxy config
+    for (const key of [SETTINGS_KEY_BOT, SETTINGS_KEY_USER, LEGACY_KEY]) {
+      const s = localStorage.getItem(key);
+      if (s) {
+        const parsed = JSON.parse(s);
+        if (parsed.proxyEnabled || parsed.proxyDomain) {
+          const proxy = { proxyEnabled: !!parsed.proxyEnabled, proxyDomain: parsed.proxyDomain || '' };
+          saveProxySettings(proxy);
+          return { ...PROXY_DEFAULTS, ...proxy };
+        }
+      }
+    }
+    return { ...PROXY_DEFAULTS };
+  } catch {
+    return { ...PROXY_DEFAULTS };
+  }
+}
+
+/**
+ * Save shared proxy settings.
+ */
+export function saveProxySettings(proxy) {
+  localStorage.setItem(SETTINGS_KEY_PROXY, JSON.stringify(proxy));
+  // Also sync into both per-mode stores so proxy-hook can find it
+  try {
+    for (const key of [SETTINGS_KEY_BOT, SETTINGS_KEY_USER]) {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const s = JSON.parse(raw);
+        s.proxyEnabled = proxy.proxyEnabled;
+        s.proxyDomain = proxy.proxyDomain;
+        localStorage.setItem(key, JSON.stringify(s));
+      }
+    }
+  } catch {}
 }
 
 // ===== Shared Exports =====

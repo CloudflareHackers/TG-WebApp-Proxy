@@ -11,7 +11,7 @@ import { TGDownloader, getApi } from './telegram-client.js';
 // teleproto is a maintained fork of GramJS with up-to-date TL layers
 import { parseTelegramLink, describeParsedLink, formatFileSize, getFileIcon } from './link-parser.js';
 import { initDB, addMessageToConversation, addBotReplyToConversation, getAllConversations, getConversation, saveFile, getAllFiles, markFileDownloaded, clearAllData, deleteConversation, clearConversations, clearFiles } from './db.js';
-import { getSettings, saveSettings, getChunkSizeOptions, getDefaults } from './settings.js';
+import { getSettings, saveSettings, getChunkSizeOptions, getDefaults, getProxySettings, saveProxySettings } from './settings.js';
 import { renderUserMode } from './user-mode.js';
 
 const MODE_KEY = 'tgcf_mode'; // 'bot' | 'user'
@@ -1431,14 +1431,15 @@ function scheduleReconnect(delayMs) {
 // ===== Settings Handlers =====
 function loadSettingsUI() {
   const s = getSettings();
+  const proxy = getProxySettings(); // Shared proxy
   const workersEl = document.getElementById('settingsWorkers');
   const chunkEl = document.getElementById('settingsChunkSize');
   const proxyEl = document.getElementById('settingsProxy');
   const proxyDomainEl = document.getElementById('settingsProxyDomain');
   if (workersEl) workersEl.value = s.parallelWorkers || 4;
   if (chunkEl) chunkEl.value = (s.chunkSize || 524288).toString();
-  if (proxyEl) proxyEl.checked = !!s.proxyEnabled;
-  if (proxyDomainEl) proxyDomainEl.value = s.proxyDomain || '';
+  if (proxyEl) proxyEl.checked = !!proxy.proxyEnabled;
+  if (proxyDomainEl) proxyDomainEl.value = proxy.proxyDomain || '';
   const stealthEl = document.getElementById('settingsStealth');
   if (stealthEl) stealthEl.checked = !!s.stealthMode;
 }
@@ -1448,27 +1449,27 @@ function handleSaveSettings() {
   const chunkSize = parseInt(document.getElementById('settingsChunkSize')?.value) || 524288;
   const proxyEnabled = !!document.getElementById('settingsProxy')?.checked;
   let proxyDomain = (document.getElementById('settingsProxyDomain')?.value || '').trim();
-  // Auto-clean: strip protocol and trailing slashes so user can paste full URL
   proxyDomain = proxyDomain.replace(/^https?:\/\//i, '').replace(/^wss?:\/\//i, '').replace(/\/+$/, '');
 
+  // Save bot-specific settings
   const s = getSettings();
   s.parallelWorkers = Math.min(Math.max(1, workers), 8);
   s.chunkSize = chunkSize;
-  s.proxyEnabled = proxyEnabled;
-  s.proxyDomain = proxyDomain;
   s.stealthMode = !!document.getElementById('settingsStealth')?.checked;
+  saveSettings(s);
 
-  // Update the input with cleaned value
+  // Save shared proxy settings (syncs to both modes)
+  saveProxySettings({ proxyEnabled, proxyDomain });
+
   const domainEl = document.getElementById('settingsProxyDomain');
   if (domainEl) domainEl.value = proxyDomain;
-  saveSettings(s);
 
   const status = document.getElementById('settingsSaveStatus');
   if (status) {
     status.textContent = '✅ Saved!';
     setTimeout(() => { status.textContent = ''; }, 2000);
   }
-  addLog('info', `⚙️ Settings saved: ${s.parallelWorkers} workers, ${formatFileSize(s.chunkSize)} chunks, proxy: ${s.proxyEnabled ? 'ON' : 'OFF'}`);
+  addLog('info', `⚙️ Settings saved: ${s.parallelWorkers} workers, ${formatFileSize(s.chunkSize)} chunks, proxy: ${proxyEnabled ? 'ON' : 'OFF'}`);
 }
 
 function handleResetSettings() {
